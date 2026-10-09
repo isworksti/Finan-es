@@ -1,20 +1,22 @@
 import sqlite3
 
-# Altere para o nome do seu arquivo .db (ex: "financeiro.db" ou "banco.db")
 NOME_BANCO = "financeiro.db"  
 
-conn = sqlite3.connect(NOME_BANCO)
-cursor = conn.cursor()
+def adicionar_coluna_cartao_id():
+    try:
+        conn = sqlite3.connect(NOME_BANCO)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            ALTER TABLE transacoes 
+            ADD COLUMN cartao_id INTEGER REFERENCES cartoes_credito(id);
+        """)
+        
+        conn.commit()
+        conn.close()
+        print("✅ Coluna 'cartao_id' adicionada com sucesso à tabela 'transacoes'!")
+    except sqlite3.OperationalError as e:
+        print(f"⚠️ Aviso ou Erro: {e}")
 
-try:
-    # Adiciona a coluna 'data' do tipo DATE com valor padrão sendo a data atual (YYYY-MM-DD)
-    cursor.execute("ALTER TABLE transacoes ADD COLUMN data DATE DEFAULT (DATE('now'));")
-    conn.commit()
-    print("Coluna 'data' adicionada com sucesso!")
-except sqlite3.OperationalError as e:
-    if "duplicate column name" in str(e):
-        print("A coluna 'data' já existe.")
-    else:
-        print(f"Erro ao atualizar banco: {e}")
-finally:
-    conn.close()
+if __name__ == "__main__":
+    adicionar_coluna_cartao_id()

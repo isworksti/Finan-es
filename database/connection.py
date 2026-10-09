@@ -23,7 +23,6 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-# Gerenciador de contexto para uso no Flet
 @contextmanager
 def get_db():
     db = SessionLocal()
@@ -33,6 +32,5 @@ def get_db():
         db.close()
 
 
-# Cria todas as tabelas no banco se não existirem
 def init_db():
     Base.metadata.create_all(bind=engine)

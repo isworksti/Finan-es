@@ -27,12 +27,27 @@ class Perfil(Base):
     )
 
 
+class CartaoCredito(Base):
+    __tablename__ = "cartoes_credito"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nome = Column(String, nullable=False)
+    limite = Column(Float, nullable=False, default=0.0)
+    dia_fechamento = Column(Integer, nullable=True)
+    dia_vencimento = Column(Integer, nullable=True)
+    perfil_id = Column(Integer, ForeignKey("perfis.id"), nullable=False)
+
+
 class Transacao(Base):
     __tablename__ = "transacoes"
 
     id = Column(Integer, primary_key=True, index=True)
     descricao = Column(String(255), nullable=False)
     valor = Column(Float, nullable=False)
+    cartao_id = Column(Integer, ForeignKey("cartoes_credito.id"), nullable=True)
+    
+    # CORREÇÃO AQUI: Apontando para "CartaoCredito"
+    cartao = relationship("CartaoCredito", backref="transacoes")
 
     # Validação do tipo direto no banco (Entrada ou Saída)
     tipo = Column(

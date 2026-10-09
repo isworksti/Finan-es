@@ -1,18 +1,22 @@
 from datetime import date, datetime
 import flet as ft
 import flet_charts as fch
+
 from database.crud import (
     MAPA_MESES,
     MESES,
+    buscar_cartoes_do_perfil,
     buscar_todos_perfis,
     buscar_transacoes_do_perfil,
     eh_credito,
     remover_transacao,
     salvar_transacao,
-    atualizar_transacao,
 )
 from utils.date_utils import extrair_data
 from utils.ui_helpers import mostrar_mensagem
+
+from views.dialogs.gestao_cartoes_dialog import GestaoCartoesDialog
+from views.dialogs.editar_transacao_dialog import EditarTransacaoDialog
 
 
 class DashboardView(ft.Column):
@@ -21,223 +25,110 @@ class DashboardView(ft.Column):
         self.page_ref = page
         self.perfil_ativo_id = perfil_ativo_id
         self.on_trocar_perfil_cb = on_trocar_perfil
-        self.detalhes_fatias = {}
-        self.transacao_em_edicao_id = None
 
-        # --- COMPONENTES DE FILTRO E FORMULÁRIO ---
-        self.txt_data = ft.TextField(
-            label="Dia",
-            value=f"{date.today().day:02d}",
-            width=70,
-            hint_text="DD",
+        # --- INSTANCIAÇÃO DOS DIÁLOGOS MODULARIZADOS ---
+        self.dialog_gestao_cartoes = GestaoCartoesDialog(
+            page_ref=self.page_ref,
+            perfil_ativo_id=self.perfil_ativo_id,
+            on_atualizar_dados_dashboard=self.carregar_dados,
         )
 
-        self.dropdown_filtro_mes = ft.Dropdown(
-            label="Mês da Fatura",
-            width=150,
-            value=str(datetime.now().month),
-            options=[ft.dropdown.Option(key=m[0], text=m[1]) for m in MESES],
-            on_select=self.ao_filtrar_data,
+        self.dialog_editar = EditarTransacaoDialog(
+            page_ref=self.page_ref,
+            perfil_ativo_id=self.perfil_ativo_id,
+            on_sucesso=self.carregar_dados,
         )
 
-        self.dropdown_filtro_ano = ft.Dropdown(
-            label="Ano",
-            width=110,
-            value=str(datetime.now().year),
-            options=[
-                ft.dropdown.Option(key=str(ano), text=str(ano))
-                for ano in range(2024, 2028)
-            ],
-            on_select=self.ao_filtrar_data,
-        )
+        # Adiciona diálogos no overlay da página
+        self.page_ref.overlay.extend([
+            self.dialog_gestao_cartoes,
+            self.dialog_editar
+        ])
 
-        self.dropdown_perfis_header = ft.Dropdown(
-            label="Perfil Ativo",
-            width=160,
-            options=[],
-            on_select=self.ao_mudar_perfil_header,
-        )
+        # --- HELPERS DE CRIAÇÃO DE CONTROLES ---
+        def make_tf(label, value="", width=None, expand=False, hint="", kb=None, on_sub=None):
+            return ft.TextField(
+                label=label,
+                value=value,
+                width=width,
+                expand=expand,
+                hint_text=hint,
+                keyboard_type=kb,
+                on_submit=on_sub,
+            )
 
-        self.txt_descricao = ft.TextField(
-            label="Descrição", expand=True, on_submit=self.adicionar_transacao
-        )
-        self.txt_valor = ft.TextField(
-            label="Valor (R$)",
-            keyboard_type=ft.KeyboardType.NUMBER,
-            width=120,
-            on_submit=self.adicionar_transacao,
-        )
+        def make_dd(label, options, value=None, width=None, expand=False, on_change=None):
+            opts = []
+            for opt in options:
+                if isinstance(opt, tuple):
+                    k, v = opt
+                    opts.append(ft.dropdown.Option(str(k), text=str(v)))
+                else:
+                    opts.append(ft.dropdown.Option(str(opt)))
 
-        self.dropdown_tipo = ft.Dropdown(
-            label="Tipo",
-            width=110,
-            options=[ft.dropdown.Option("Entrada"), ft.dropdown.Option("Saída")],
-            value="Saída",
-        )
+            return ft.Dropdown(
+                label=label,
+                width=width,
+                expand=expand,
+                value=value,
+                options=opts,
+                on_select=on_change,
+            )
 
-        self.dropdown_pagamento = ft.Dropdown(
-            label="Pagamento",
+        # --- COMPONENTES PRINCIPAIS ---
+        self.txt_data = make_tf("Dia", value=f"{date.today().day:02d}", width=65, hint="DD")
+        self.txt_descricao = make_tf("Descrição", expand=True, on_sub=self.adicionar_transacao)
+        self.txt_valor = make_tf("Valor (R$)", width=110, kb=ft.KeyboardType.NUMBER, on_sub=self.adicionar_transacao)
+
+        self.dropdown_filtro_mes = make_dd("Mês da Fatura", MESES, value=str(datetime.now().month), width=150, on_change=self.ao_filtrar_data)
+        self.dropdown_filtro_ano = make_dd("Ano", [str(y) for y in range(2024, 2028)], value=str(datetime.now().year), width=110, on_change=self.ao_filtrar_data)
+        self.dropdown_perfis_header = make_dd("Perfil Ativo", [], width=160, on_change=self.ao_mudar_perfil_header)
+
+        self.dropdown_tipo = make_dd("Tipo", ["Entrada", "Saída"], value="Saída", width=115)
+        self.dropdown_pagamento = make_dd(
+            "Pagamento", ["Dinheiro", "PIX", "Crédito", "Débito"], value="PIX", width=120, on_change=self.ao_mudar_forma_pagamento
+        )
+        self.dropdown_cartao = make_dd("Cartão", [], width=140)
+        self.dropdown_cartao.disabled = True
+
+        self.btn_salvar = ft.FilledButton(
+            "Adicionar",
+            icon=ft.Icons.ADD,
             width=130,
-            options=[
-                ft.dropdown.Option("Dinheiro"),
-                ft.dropdown.Option("PIX"),
-                ft.dropdown.Option("Crédito"),
-                ft.dropdown.Option("Débito"),
-            ],
-            value="PIX",
-        )
-
-        self.btn_salvar = ft.Container(
-            content=ft.Row(
-                [
-                    ft.Icon(ft.Icons.ADD, color=ft.Colors.WHITE),
-                    ft.Text("Adicionar", color=ft.Colors.WHITE),
-                ],
-                alignment=ft.MainAxisAlignment.CENTER,
-            ),
             bgcolor=ft.Colors.BLUE_600,
-            padding=10,
-            border_radius=8,
+            color=ft.Colors.WHITE,
             on_click=self.adicionar_transacao,
         )
 
-        # --- COMPONENTES DO MODAL DE EDIÇÃO ---
-        self.edit_txt_dia = ft.TextField(label="Dia", width=70, hint_text="DD")
-        self.edit_txt_mes = ft.TextField(label="Mês", width=70, hint_text="MM")
-        self.edit_txt_ano = ft.TextField(label="Ano", width=90, hint_text="AAAA")
-        self.edit_txt_descricao = ft.TextField(label="Descrição", expand=True)
-        self.edit_txt_valor = ft.TextField(
-            label="Valor (R$)", keyboard_type=ft.KeyboardType.NUMBER, width=120
-        )
-        self.edit_dropdown_tipo = ft.Dropdown(
-            label="Tipo",
-            width=110,
-            options=[ft.dropdown.Option("Entrada"), ft.dropdown.Option("Saída")],
-        )
-        self.edit_dropdown_pagamento = ft.Dropdown(
-            label="Pagamento",
-            width=130,
-            options=[
-                ft.dropdown.Option("Dinheiro"),
-                ft.dropdown.Option("PIX"),
-                ft.dropdown.Option("Crédito"),
-                ft.dropdown.Option("Débito"),
-            ],
-        )
+        self.txt_kpi_entradas = self._txt_kpi(ft.Colors.GREEN_400)
+        self.txt_kpi_saidas = self._txt_kpi(ft.Colors.RED_400)
+        self.txt_kpi_saldo = self._txt_kpi(ft.Colors.BLUE_400)
+        self.txt_fatura_total = self._txt_kpi(ft.Colors.AMBER_400)
 
-        self.dialog_editar = ft.AlertDialog(
-            title=ft.Text("Editar Lançamento"),
-            content=ft.Column(
-                [
-                    ft.Row(
-                        [
-                            self.edit_txt_dia,
-                            self.edit_txt_mes,
-                            self.edit_txt_ano,
-                        ]
-                    ),
-                    self.edit_txt_descricao,
-                    ft.Row(
-                        [
-                            self.edit_txt_valor,
-                            self.edit_dropdown_tipo,
-                            self.edit_dropdown_pagamento,
-                        ]
-                    ),
-                ],
-                tight=True,
-                spacing=10,
-            ),
-            actions=[
-                ft.TextButton("Cancelar", on_click=self.fechar_dialog_edicao),
-                ft.FilledButton(
-                    "Salvar Alterações",
-                    bgcolor=ft.Colors.BLUE_600,
-                    color=ft.Colors.WHITE,
-                    on_click=self.salvar_edicao_transacao,
-                ),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
+        self.chart_geral = fch.PieChart(sections=[], sections_space=2, center_space_radius=45, expand=True)
+        self.chart_cartao = fch.PieChart(sections=[], sections_space=2, center_space_radius=45, expand=True)
 
-        # --- CARTÕES DE INDICADORES (KPIs) ---
-        self.txt_kpi_entradas = ft.Text("R$ 0.00", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
-        self.txt_kpi_saidas = ft.Text("R$ 0.00", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_400)
-        self.txt_kpi_saldo = ft.Text("R$ 0.00", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400)
-        self.txt_fatura_total = ft.Text("R$ 0.00", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
-
-        # --- GRÁFICOS ---
-        self.txt_hover_detalhes = ft.Text(
-            "Passe o mouse sobre as fatias do gráfico para ver os itens.",
-            size=13,
-            color=ft.Colors.GREY_400,
-        )
-
-        self.chart_geral = fch.PieChart(
-            sections=[],
-            sections_space=2,
-            center_space_radius=45,
-            expand=True,
-            on_event=self.on_chart_hover,
-        )
-
-        self.chart_cartao = fch.PieChart(
-            sections=[],
-            sections_space=2,
-            center_space_radius=45,
-            expand=True,
-        )
-
-        # --- TABELAS ---
         self.tabela_geral = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Data")),
-                ft.DataColumn(ft.Text("Descrição")),
-                ft.DataColumn(ft.Text("Tipo")),
-                ft.DataColumn(ft.Text("Pagamento")),
-                ft.DataColumn(ft.Text("Valor (R$)")),
-                ft.DataColumn(ft.Text("Ações")),
-            ],
+            columns=[ft.DataColumn(ft.Text(col)) for col in ["Data", "Descrição", "Tipo", "Pagamento", "Valor (R$)", "Ações"]],
             rows=[],
             expand=True,
         )
-
         self.tabela_cartao = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Data")),
-                ft.DataColumn(ft.Text("Descrição")),
-                ft.DataColumn(ft.Text("Tipo")),
-                ft.DataColumn(ft.Text("Valor (R$)")),
-                ft.DataColumn(ft.Text("Ações")),
-            ],
+            columns=[ft.DataColumn(ft.Text(col)) for col in ["Data", "Descrição", "Tipo", "Cartão", "Valor (R$)", "Ações"]],
             rows=[],
             expand=True,
         )
 
-        # --- CONSTRUÇÃO DAS ABAS ---
         self._construir_aba_dashboard()
-        self._construir_aba_geral()
-        self._construir_aba_cartao()
+        self.aba_geral = self._criar_aba_tabela("Histórico", self.tabela_geral)
+        
+        # Criação da aba de Cartão com botão de gerenciamento integrado no seu conteúdo
+        self.aba_cartao_content = self._criar_aba_cartao()
 
-        # Botões das Abas
-        self.btn_tab_dashboard = ft.OutlinedButton(
-            "Dashboard",
-            icon=ft.Icons.ANALYTICS_OUTLINED,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_600),
-            on_click=lambda e: self.mudar_aba("dashboard"),
-        )
-        self.btn_tab_geral = ft.OutlinedButton(
-            "Lançamentos Gerais",
-            icon=ft.Icons.TABLE_ROWS_OUTLINED,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.TRANSPARENT),
-            on_click=lambda e: self.mudar_aba("geral"),
-        )
-        self.btn_tab_cartao = ft.OutlinedButton(
-            "Cartão de Crédito",
-            icon=ft.Icons.CREDIT_CARD,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.TRANSPARENT),
-            on_click=lambda e: self.mudar_aba("cartao"),
-        )
+        # Botões de Navegação das Abas
+        self.btn_tab_dashboard = ft.OutlinedButton("Dashboard", icon=ft.Icons.ANALYTICS_OUTLINED, style=self._obter_estilo_aba(True), on_click=lambda e: self.mudar_aba("dashboard"))
+        self.btn_tab_geral = ft.OutlinedButton("Lançamentos Gerais", icon=ft.Icons.TABLE_ROWS_OUTLINED, style=self._obter_estilo_aba(False), on_click=lambda e: self.mudar_aba("geral"))
+        self.btn_tab_cartao = ft.OutlinedButton("Cartão de Crédito", icon=ft.Icons.CREDIT_CARD, style=self._obter_estilo_aba(False), on_click=lambda e: self.mudar_aba("cartao"))
 
         header = ft.Container(
             content=ft.Row(
@@ -250,11 +141,7 @@ class DashboardView(ft.Column):
                             self.dropdown_filtro_ano,
                             ft.VerticalDivider(),
                             self.dropdown_perfis_header,
-                            ft.TextButton(
-                                "Trocar Perfil",
-                                icon=ft.Icons.SWAP_HORIZ,
-                                on_click=lambda e: self.on_trocar_perfil_cb(),
-                            ),
+                            ft.TextButton("Trocar Perfil", icon=ft.Icons.SWAP_HORIZ, on_click=lambda e: self.on_trocar_perfil_cb()),
                         ],
                         alignment=ft.MainAxisAlignment.END,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -268,46 +155,76 @@ class DashboardView(ft.Column):
         self.controls = [
             header,
             ft.Row(
-                [
-                    self.txt_data,
-                    self.txt_descricao,
-                    self.txt_valor,
-                    self.dropdown_tipo,
-                    self.dropdown_pagamento,
-                    self.btn_salvar,
-                ]
+                [self.txt_data, self.txt_descricao, self.txt_valor, self.dropdown_tipo, self.dropdown_pagamento, self.dropdown_cartao, self.btn_salvar],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             ft.Divider(),
             ft.Row(
-                [self.btn_tab_dashboard, self.btn_tab_geral, self.btn_tab_cartao],
+                [
+                    self.btn_tab_dashboard, 
+                    self.btn_tab_geral, 
+                    self.btn_tab_cartao,
+                ], 
                 spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER
             ),
-            ft.Stack(
-                controls=[self.aba_dashboard, self.aba_geral, self.aba_cartao_content],
-                expand=True,
-            ),
+            ft.Stack(controls=[self.aba_dashboard, self.aba_geral, self.aba_cartao_content], expand=True),
         ]
+
+    def _txt_kpi(self, color):
+        return ft.Text("R$ 0.00", size=20, weight=ft.FontWeight.BOLD, color=color)
 
     def _criar_card_kpi(self, titulo, controle_texto, icone, cor_icone):
         return ft.Container(
             content=ft.Row(
                 [
                     ft.Icon(icone, size=30, color=cor_icone),
-                    ft.Column(
-                        [
-                            ft.Text(titulo, size=12, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_300),
-                            controle_texto,
-                        ],
-                        spacing=2,
-                    ),
+                    ft.Column([ft.Text(titulo, size=12, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_300), controle_texto], spacing=2),
                 ],
                 alignment=ft.MainAxisAlignment.START,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             padding=15,
-            bgcolor=ft.Colors.TRANSPARENT,
             border=ft.Border.all(1, ft.Colors.WHITE_24),
             border_radius=10,
+            expand=True,
+        )
+
+    def _criar_aba_tabela(self, titulo, tabela):
+        return ft.Container(
+            content=ft.Column([ft.Text(titulo, size=18, weight=ft.FontWeight.BOLD), tabela], expand=True, scroll=ft.ScrollMode.AUTO),
+            padding=10,
+            visible=False,
+            expand=True,
+        )
+
+    def _criar_aba_cartao(self):
+        # Cabeçalho da aba de Cartão de Crédito contendo a opção de Gerenciar Cartões
+        header_cartao = ft.Row(
+            [
+                ft.Text("Histórico de Faturas", size=18, weight=ft.FontWeight.BOLD),
+                ft.TextButton(
+                    "Gerenciar Cartões",
+                    icon=ft.Icons.SETTINGS,
+                    icon_color=ft.Colors.BLUE_400,
+                    on_click=lambda e: self.abrir_gestao_cartoes()
+                )
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+        )
+
+        return ft.Container(
+            content=ft.Column(
+                [
+                    header_cartao,
+                    self.tabela_cartao
+                ],
+                expand=True,
+                scroll=ft.ScrollMode.AUTO
+            ),
+            padding=10,
+            visible=False,
             expand=True,
         )
 
@@ -322,165 +239,136 @@ class DashboardView(ft.Column):
             spacing=15,
         )
 
-        box_grafico_geral = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text("Entradas x Saídas", size=16, weight=ft.FontWeight.BOLD),
-                    ft.Container(content=self.chart_geral, height=220),
-                    ft.Divider(),
-                    ft.Text("Detalhes da Categoria:", weight=ft.FontWeight.BOLD, size=12),
-                    self.txt_hover_detalhes,
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=15,
-            border=ft.Border.all(1, ft.Colors.WHITE_24),
-            border_radius=10,
+        def make_chart_box(title, chart):
+            content = [ft.Text(title, size=16, weight=ft.FontWeight.BOLD), ft.Container(content=chart, height=220)]
+            return ft.Container(
+                content=ft.Column(content, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=15,
+                border=ft.Border.all(1, ft.Colors.WHITE_24),
+                border_radius=10,
+                expand=True,
+            )
+
+        graficos_row = ft.Row(
+            [
+                make_chart_box("Entradas x Saídas", self.chart_geral),
+                make_chart_box("Fatura do Cartão", self.chart_cartao),
+            ],
+            spacing=15,
             expand=True,
         )
-
-        box_grafico_cartao = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text("Fatura do Cartão", size=16, weight=ft.FontWeight.BOLD),
-                    ft.Container(content=self.chart_cartao, height=220),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            padding=15,
-            border=ft.Border.all(1, ft.Colors.WHITE_24),
-            border_radius=10,
-            expand=True,
-        )
-
-        graficos_row = ft.Row([box_grafico_geral, box_grafico_cartao], spacing=15, expand=True)
 
         self.aba_dashboard = ft.Container(
-            content=ft.Column([cards_kpi, ft.Container(height=10), graficos_row], expand=True),
+            content=ft.Column(
+                [
+                    cards_kpi,
+                    ft.Container(height=15),
+                    graficos_row,
+                ],
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
+            ),
             padding=10,
             visible=True,
             expand=True,
         )
 
-    def _construir_aba_geral(self):
-        self.aba_geral = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text("Histórico de Lançamentos Gerais", size=18, weight=ft.FontWeight.BOLD),
-                    self.tabela_geral,
-                ],
-                expand=True,
-                scroll=ft.ScrollMode.AUTO,
-            ),
-            padding=10,
-            visible=False,
-            expand=True,
-        )
-
-    def _construir_aba_cartao(self):
-        self.aba_cartao_content = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Text("Lançamentos de Cartão de Crédito", size=18, weight=ft.FontWeight.BOLD),
-                    self.tabela_cartao,
-                ],
-                expand=True,
-                scroll=ft.ScrollMode.AUTO,
-            ),
-            padding=10,
-            visible=False,
-            expand=True,
-        )
+    # --- GERENCIAMENTO DE DIÁLOGOS ---
+    def abrir_gestao_cartoes(self):
+        if not self.perfil_ativo_id[0]:
+            mostrar_mensagem(self.page_ref, "❌ Selecione um perfil primeiro!")
+            return
+        self.dialog_gestao_cartoes.abrir()
 
     def abrir_dialog_edicao(self, transacao):
-        self.transacao_em_edicao_id = transacao.id
-        t_data = extrair_data(transacao)
+        self.dialog_editar.abrir_para_edicao(transacao)
 
-        if t_data:
-            self.edit_txt_dia.value = f"{t_data.day:02d}"
-            self.edit_txt_mes.value = f"{t_data.month:02d}"
-            self.edit_txt_ano.value = str(t_data.year)
-        else:
-            hoje = date.today()
-            self.edit_txt_dia.value = f"{hoje.day:02d}"
-            self.edit_txt_mes.value = f"{hoje.month:02d}"
-            self.edit_txt_ano.value = str(hoje.year)
+    # --- MÉTODOS AUXILIARES E EVENTOS ---
+    def ao_mudar_forma_pagamento(self, e=None):
+        is_credito = eh_credito(self.dropdown_pagamento.value)
+        self.dropdown_cartao.disabled = not is_credito
+        if not is_credito:
+            self.dropdown_cartao.value = None
+        self.dropdown_cartao.update()
 
-        self.edit_txt_descricao.value = transacao.descricao or ""
-        self.edit_txt_valor.value = f"{transacao.valor:.2f}".replace(".", ",")
-        self.edit_dropdown_tipo.value = transacao.tipo
-        self.edit_dropdown_pagamento.value = transacao.forma_pagamento or "PIX"
-
-        if self.dialog_editar not in self.page_ref.overlay:
-            self.page_ref.overlay.append(self.dialog_editar)
-            
-        self.dialog_editar.open = True
-        self.page_ref.update()
-
-    def fechar_dialog_edicao(self, e=None):
-        self.transacao_em_edicao_id = None
-        self.dialog_editar.open = False
-        self.page_ref.update()
-
-    def salvar_edicao_transacao(self, e):
-        if not self.transacao_em_edicao_id:
+    def carregar_opcoes_cartoes(self):
+        if not self.perfil_ativo_id[0]:
             return
+        cartoes = buscar_cartoes_do_perfil(self.perfil_ativo_id[0])
+        self.dropdown_cartao.options = [ft.dropdown.Option(key=str(c.id), text=c.nome) for c in cartoes]
+        if self.dropdown_cartao.options and not self.dropdown_cartao.value:
+            self.dropdown_cartao.value = self.dropdown_cartao.options[0].key
 
+    def _obter_dados_form(self):
         try:
-            dia = int(self.edit_txt_dia.value.strip())
-            mes = int(self.edit_txt_mes.value.strip())
-            ano = int(self.edit_txt_ano.value.strip())
-            nova_data = date(ano, mes, dia)
-        except (ValueError, TypeError):
-            mostrar_mensagem(self.page_ref, "❌ Erro: Data inválida para edição!")
-            return
+            mes = int(self.dropdown_filtro_mes.value)
+            ano = int(self.dropdown_filtro_ano.value)
+            dia = int(self.txt_data.value.strip())
+            dt = date(ano, mes, dia)
 
-        try:
-            novo_valor = float(self.edit_txt_valor.value.replace(",", "."))
-        except (ValueError, TypeError):
-            mostrar_mensagem(self.page_ref, "❌ Erro: Valor inválido!")
-            return
+            val_str = str(self.txt_valor.value or "").replace("R$", "").replace(" ", "").replace(",", ".").strip()
+            val = float(val_str)
 
-        if not self.edit_txt_descricao.value.strip():
-            mostrar_mensagem(self.page_ref, "❌ Erro: A descrição é obrigatória!")
-            return
+            desc = self.txt_descricao.value.strip() if self.txt_descricao.value else ""
+            if not desc:
+                raise ValueError("Descrição vazia")
 
-        try:
-            atualizar_transacao(
-                transacao_id=self.transacao_em_edicao_id,
-                descricao=self.edit_txt_descricao.value.strip(),
-                valor=novo_valor,
-                tipo=self.edit_dropdown_tipo.value,
-                forma_pagamento=self.edit_dropdown_pagamento.value,
-                data_dt=nova_data,
-            )
-            self.fechar_dialog_edicao()
-            mostrar_mensagem(self.page_ref, "✅ Lançamento atualizado com sucesso!")
-            self.carregar_dados()
-        except Exception as ex:
-            print(f"Erro ao editar transação: {ex}")
-            mostrar_mensagem(self.page_ref, "❌ Erro ao salvar edição no banco!")
+            cartao_id = int(self.dropdown_cartao.value) if (eh_credito(self.dropdown_pagamento.value) and self.dropdown_cartao.value) else None
 
-    def on_chart_hover(self, e: fch.PieChartEvent):
-        if (
-            e.section_index is not None
-            and e.section_index >= 0
-            and e.section_index in self.detalhes_fatias
-        ):
-            self.txt_hover_detalhes.value = self.detalhes_fatias[e.section_index]
-        else:
-            self.txt_hover_detalhes.value = (
-                "Passe o mouse sobre as fatias do gráfico para ver os itens."
-            )
-        self.txt_hover_detalhes.update()
+            return dt, val, desc, cartao_id
+        except Exception:
+            return None, None, None, None
 
     def carregar_perfis_header(self):
         perfis = buscar_todos_perfis()
-        self.dropdown_perfis_header.options = [
-            ft.dropdown.Option(key=str(p.id), text=p.nome) for p in perfis
-        ]
+        self.dropdown_perfis_header.options = [ft.dropdown.Option(key=str(p.id), text=p.nome) for p in perfis]
         if self.perfil_ativo_id[0]:
             self.dropdown_perfis_header.value = str(self.perfil_ativo_id[0])
+
+    def _gerar_linhas_tabela(self, transacoes, modo_cartao=False):
+        linhas = []
+        for t in transacoes:
+            btn_edit = ft.IconButton(
+                icon=ft.Icons.EDIT_OUTLINED,
+                icon_color=ft.Colors.BLUE_400,
+                tooltip="Editar",
+                on_click=lambda e, trans=t: self.abrir_dialog_edicao(trans),
+            )
+            btn_del = ft.IconButton(
+                icon=ft.Icons.DELETE_OUTLINED,
+                icon_color=ft.Colors.GREY_500,
+                tooltip="Apagar",
+                on_click=lambda e, t_id=t.id: self.deletar_transacao_acao(t_id),
+            )
+
+            t_data = extrair_data(t)
+            data_fmt = t_data.strftime("%d/%m/%Y") if t_data else "-"
+            cor_val = ft.Colors.GREEN_400 if t.tipo == "Entrada" else ft.Colors.RED_400
+
+            cells = [
+                ft.DataCell(ft.Text(data_fmt)),
+                ft.DataCell(ft.Text(t.descricao)),
+                ft.DataCell(ft.Text(t.tipo)),
+            ]
+
+            if modo_cartao:
+                nome_c = "-"
+                if hasattr(t, "cartao") and t.cartao:
+                    nome_c = t.cartao.nome
+                elif hasattr(t, "cartao_id") and t.cartao_id:
+                    nome_c = f"Cartão #{t.cartao_id}"
+                cells.append(ft.DataCell(ft.Text(nome_c)))
+            else:
+                cells.append(ft.DataCell(ft.Text(t.forma_pagamento or "-")))
+
+            cells.extend(
+                [
+                    ft.DataCell(ft.Text(f"R$ {t.valor:.2f}", color=cor_val)),
+                    ft.DataCell(ft.Row([btn_edit, btn_del], spacing=0)),
+                ]
+            )
+            linhas.append(ft.DataRow(cells=cells))
+        return linhas
 
     def carregar_dados(self):
         if not self.perfil_ativo_id[0]:
@@ -488,68 +376,19 @@ class DashboardView(ft.Column):
             return
 
         try:
-            val_mes = self.dropdown_filtro_mes.value
-            mes_sel = (
-                int(val_mes)
-                if str(val_mes).isdigit()
-                else MAPA_MESES.get(str(val_mes), date.today().month)
-            )
+            self.carregar_opcoes_cartoes()
 
-            try:
-                ano_sel = int(self.dropdown_filtro_ano.value)
-            except (TypeError, ValueError):
-                ano_sel = date.today().year
+            val_mes = self.dropdown_filtro_mes.value
+            mes_sel = int(val_mes) if str(val_mes).isdigit() else MAPA_MESES.get(str(val_mes), date.today().month)
+            ano_sel = int(self.dropdown_filtro_ano.value or date.today().year)
 
             transacoes_todas = buscar_transacoes_do_perfil(self.perfil_ativo_id[0])
+            transacoes_mes = [t for t in transacoes_todas if (dt := extrair_data(t)) and dt.month == mes_sel and dt.year == ano_sel]
 
-            transacoes_mes = []
-            for t in transacoes_todas:
-                t_data = extrair_data(t)
-                if t_data and t_data.month == mes_sel and t_data.year == ano_sel:
-                    transacoes_mes.append(t)
+            total_entradas = sum(t.valor for t in transacoes_mes if t.tipo == "Entrada")
+            total_saidas = sum(t.valor for t in transacoes_mes if t.tipo == "Saída")
 
-            total_entradas = 0.0
-            total_saidas = 0.0
-            novas_linhas_geral = []
-
-            for t in transacoes_mes:
-                if t.tipo == "Entrada":
-                    total_entradas += t.valor
-                    cor_val = ft.Colors.GREEN_400
-                else:
-                    total_saidas += t.valor
-                    cor_val = ft.Colors.RED_400
-
-                btn_edit = ft.IconButton(
-                    icon=ft.Icons.EDIT_OUTLINED,
-                    icon_color=ft.Colors.BLUE_400,
-                    tooltip="Editar",
-                    on_click=lambda e, trans=t: self.abrir_dialog_edicao(trans),
-                )
-
-                btn_del = ft.IconButton(
-                    icon=ft.Icons.DELETE_OUTLINED,
-                    icon_color=ft.Colors.GREY_500,
-                    tooltip="Apagar",
-                    on_click=lambda e, t_id=t.id: self.deletar_transacao_acao(t_id),
-                )
-                t_data_val = extrair_data(t)
-                data_fmt = t_data_val.strftime("%d/%m/%Y") if t_data_val else "-"
-
-                novas_linhas_geral.append(
-                    ft.DataRow(
-                        cells=[
-                            ft.DataCell(ft.Text(data_fmt)),
-                            ft.DataCell(ft.Text(t.descricao)),
-                            ft.DataCell(ft.Text(t.tipo)),
-                            ft.DataCell(ft.Text(t.forma_pagamento or "-")),
-                            ft.DataCell(ft.Text(f"R$ {t.valor:.2f}", color=cor_val)),
-                            ft.DataCell(ft.Row([btn_edit, btn_del], spacing=0)),
-                        ]
-                    )
-                )
-
-            self.tabela_geral.rows = novas_linhas_geral
+            self.tabela_geral.rows = self._gerar_linhas_tabela(transacoes_mes, modo_cartao=False)
 
             saldo_mes = total_entradas - total_saidas
             self.txt_kpi_entradas.value = f"R$ {total_entradas:.2f}"
@@ -557,139 +396,44 @@ class DashboardView(ft.Column):
             self.txt_kpi_saldo.value = f"R$ {saldo_mes:.2f}"
             self.txt_kpi_saldo.color = ft.Colors.GREEN_400 if saldo_mes >= 0 else ft.Colors.RED_400
 
-            self.detalhes_fatias.clear()
-            entradas_mes = [t for t in transacoes_mes if t.tipo == "Entrada"]
-            saidas_mes = [t for t in transacoes_mes if t.tipo == "Saída"]
-
-            nomes_e = " ".join([f"R$ {i.valor:.2f} {i.descricao} \n" for i in entradas_mes])
-            nomes_s = " ".join([f"R$ {i.valor:.2f} {i.descricao} \n" for i in saidas_mes])
-
-            self.detalhes_fatias[0] = (
-                f"🟢 Entradas ({len(entradas_mes)} itens):\n{nomes_e if nomes_e else 'Nenhum item'}"
-            )
-            self.detalhes_fatias[1] = (
-                f"🔴 Saídas ({len(saidas_mes)} itens):\n{nomes_s if nomes_s else 'Nenhum item'}"
-            )
-
             tot_geral = total_entradas + total_saidas
-            novas_sec_geral = []
             if tot_geral > 0:
-                pct_e = (total_entradas / tot_geral) * 100
-                pct_s = (total_saidas / tot_geral) * 100
-                novas_sec_geral = [
+                self.chart_geral.sections = [
                     fch.PieChartSection(
-                        value=total_entradas if total_entradas > 0 else 0.001,
-                        title=f"Entradas\n{pct_e:.1f}%",
+                        value=total_entradas or 0.001,
+                        title=f"Entradas\n{(total_entradas/tot_geral)*100:.1f}%",
                         color=ft.Colors.BLUE_400,
                         radius=60,
-                        title_style=ft.TextStyle(
-                            size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE
-                        ),
+                        title_style=ft.TextStyle(size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
                     ),
                     fch.PieChartSection(
-                        value=total_saidas if total_saidas > 0 else 0.001,
-                        title=f"Saídas\n{pct_s:.1f}%",
+                        value=total_saidas or 0.001,
+                        title=f"Saídas\n{(total_saidas/tot_geral)*100:.1f}%",
                         color=ft.Colors.RED_400,
                         radius=60,
-                        title_style=ft.TextStyle(
-                            size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE
-                        ),
+                        title_style=ft.TextStyle(size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
                     ),
                 ]
-            self.chart_geral.sections = novas_sec_geral
 
-            compras_mes_atual = 0.0
-            pagamentos_mes_atual = 0.0
-            novas_linhas_cartao = []
+            tc_mes = [t for t in transacoes_mes if eh_credito(t.forma_pagamento)]
+            compras_mes_atual = sum(tc.valor for tc in tc_mes if tc.tipo == "Saída")
+            pagamentos_mes_atual = sum(tc.valor for tc in tc_mes if tc.tipo == "Entrada")
 
-            transacoes_credito_mes = [
-                t for t in transacoes_mes if eh_credito(t.forma_pagamento)
-            ]
+            self.tabela_cartao.rows = self._gerar_linhas_tabela(tc_mes, modo_cartao=True)
 
-            for tc in transacoes_credito_mes:
-                if tc.tipo == "Saída":
-                    compras_mes_atual += tc.valor
-                elif tc.tipo == "Entrada":
-                    pagamentos_mes_atual += tc.valor
-
-                btn_edit_cc = ft.IconButton(
-                    icon=ft.Icons.EDIT_OUTLINED,
-                    icon_color=ft.Colors.BLUE_400,
-                    tooltip="Editar",
-                    on_click=lambda e, trans=tc: self.abrir_dialog_edicao(trans),
-                )
-                btn_del_cc = ft.IconButton(
-                    icon=ft.Icons.DELETE_OUTLINED,
-                    icon_color=ft.Colors.GREY_500,
-                    tooltip="Apagar",
-                    on_click=lambda e, t_id=tc.id: self.deletar_transacao_acao(t_id),
-                )
-                tc_data_val = extrair_data(tc)
-                data_fmt_cc = tc_data_val.strftime("%d/%m/%Y") if tc_data_val else "-"
-                cor_cc = (
-                    ft.Colors.GREEN_400 if tc.tipo == "Entrada" else ft.Colors.RED_400
-                )
-
-                novas_linhas_cartao.append(
-                    ft.DataRow(
-                        cells=[
-                            ft.DataCell(ft.Text(data_fmt_cc)),
-                            ft.DataCell(ft.Text(tc.descricao)),
-                            ft.DataCell(ft.Text(tc.tipo)),
-                            ft.DataCell(ft.Text(f"R$ {tc.valor:.2f}", color=cor_cc)),
-                            ft.DataCell(ft.Row([btn_edit_cc, btn_del_cc], spacing=0)),
-                        ]
-                    )
-                )
-
-            self.tabela_cartao.rows = novas_linhas_cartao
-
-            transacoes_credito_todas = [
-                t for t in transacoes_todas if eh_credito(t.forma_pagamento)
-            ]
-            transacoes_credito_todas.sort(
-                key=lambda t: (extrair_data(t) or date.min, t.id or 0)
-            )
-
+            tc_todas = sorted([t for t in transacoes_todas if eh_credito(t.forma_pagamento)], key=lambda t: (extrair_data(t) or date.min, t.id or 0))
             saldo_fatura = 0.0
-            for tc in transacoes_credito_todas:
-                tc_data = extrair_data(tc)
-                if tc_data and (
-                    tc_data.year < ano_sel
-                    or (tc_data.year == ano_sel and tc_data.month <= mes_sel)
-                ):
-                    if tc.tipo == "Saída":
-                        saldo_fatura += tc.valor
-                    elif tc.tipo == "Entrada":
-                        saldo_fatura = max(0.0, saldo_fatura - tc.valor)
+            for tc in tc_todas:
+                if (tc_dt := extrair_data(tc)) and (tc_dt.year < ano_sel or (tc_dt.year == ano_sel and tc_dt.month <= mes_sel)):
+                    saldo_fatura = saldo_fatura + tc.valor if tc.tipo == "Saída" else max(0.0, saldo_fatura - tc.valor)
 
             self.txt_fatura_total.value = f"R$ {saldo_fatura:.2f}"
 
-            novas_sec_cartao = []
             if compras_mes_atual > 0 or pagamentos_mes_atual > 0:
-                novas_sec_cartao = [
-                    fch.PieChartSection(
-                        value=compras_mes_atual if compras_mes_atual > 0 else 0.001,
-                        title=f"Gastos\nR$ {compras_mes_atual:.2f}",
-                        color=ft.Colors.RED_400,
-                        radius=60,
-                        title_style=ft.TextStyle(
-                            size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE
-                        ),
-                    ),
-                    fch.PieChartSection(
-                        value=pagamentos_mes_atual
-                        if pagamentos_mes_atual > 0
-                        else 0.001,
-                        title=f"Abatimento\nR$ {pagamentos_mes_atual:.2f}",
-                        color=ft.Colors.GREEN_400,
-                        radius=60,
-                        title_style=ft.TextStyle(
-                            size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE
-                        ),
-                    ),
+                self.chart_cartao.sections = [
+                    fch.PieChartSection(value=compras_mes_atual or 0.001, title=f"Gastos\nR$ {compras_mes_atual:.2f}", color=ft.Colors.RED_400, radius=60, title_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)),
+                    fch.PieChartSection(value=pagamentos_mes_atual or 0.001, title=f"Abatimento\nR$ {pagamentos_mes_atual:.2f}", color=ft.Colors.GREEN_400, radius=60, title_style=ft.TextStyle(size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)),
                 ]
-            self.chart_cartao.sections = novas_sec_cartao
 
         except Exception as ex:
             print(f"Erro ao carregar dados: {ex}")
@@ -706,67 +450,24 @@ class DashboardView(ft.Column):
             mostrar_mensagem(self.page_ref, "Selecione um perfil primeiro!")
             return
 
-        if (
-            not self.txt_data.value
-            or not self.txt_descricao.value
-            or not self.txt_valor.value
-        ):
-            mostrar_mensagem(self.page_ref, "Preencha todos os campos obrigatórios!")
-            return
-
-        val_mes = self.dropdown_filtro_mes.value
-        mes_filtro = (
-            int(val_mes)
-            if str(val_mes).isdigit()
-            else MAPA_MESES.get(str(val_mes), date.today().month)
-        )
-        ano_filtro = int(self.dropdown_filtro_ano.value)
-        dia_str = self.txt_data.value.strip()
-
-        if not dia_str.isdigit():
-            mostrar_mensagem(
-                self.page_ref,
-                "❌ Erro: Digite apenas o número do dia (ex: 09 ou 15).",
-            )
-            self.txt_data.focus()
-            return
-
-        try:
-            dia_int = int(dia_str)
-            data_dt = date(ano_filtro, mes_filtro, dia_int)
-        except ValueError:
-            mostrar_mensagem(
-                self.page_ref,
-                f"❌ Erro: O dia '{dia_str}' é inválido para o mês selecionado!",
-            )
-            self.txt_data.focus()
-            return
-
-        try:
-            valor_float = float(self.txt_valor.value.replace(",", "."))
-        except ValueError:
-            mostrar_mensagem(self.page_ref, "❌ Erro: Valor inválido!")
-            self.txt_valor.focus()
+        dt, val, desc, cartao_id = self._obter_dados_form()
+        if not dt or val is None or not desc:
+            mostrar_mensagem(self.page_ref, "❌ Erro: Preencha todos os campos corretamente!")
             return
 
         try:
             salvar_transacao(
-                descricao=self.txt_descricao.value.strip(),
-                valor=valor_float,
+                descricao=desc,
+                valor=val,
                 tipo=self.dropdown_tipo.value,
                 forma_pagamento=self.dropdown_pagamento.value,
-                data_dt=data_dt,
+                data_dt=dt,
                 perfil_id=self.perfil_ativo_id[0],
+                cartao_id=cartao_id,
             )
-
             self.txt_descricao.value = ""
             self.txt_valor.value = ""
-            self.txt_data.value = (
-                f"{date.today().day:02d}"
-                if date.today().month == mes_filtro
-                else "01"
-            )
-            self.carregar_dados()
+            self.ao_filtrar_data()
             mostrar_mensagem(self.page_ref, "✅ Lançamento adicionado com sucesso!")
         except Exception as ex:
             print(f"Erro ao adicionar transação: {ex}")
@@ -774,21 +475,12 @@ class DashboardView(ft.Column):
     def ao_filtrar_data(self, e=None):
         try:
             val_mes = self.dropdown_filtro_mes.value
-            mes_sel = (
-                int(val_mes)
-                if str(val_mes).isdigit()
-                else MAPA_MESES.get(str(val_mes), date.today().month)
-            )
+            mes_sel = int(val_mes) if str(val_mes).isdigit() else MAPA_MESES.get(str(val_mes), date.today().month)
             ano_sel = int(self.dropdown_filtro_ano.value)
             hoje = date.today()
-
-            if hoje.month == mes_sel and hoje.year == ano_sel:
-                self.txt_data.value = f"{hoje.day:02d}"
-            else:
-                self.txt_data.value = "01"
+            self.txt_data.value = f"{hoje.day:02d}" if hoje.month == mes_sel and hoje.year == ano_sel else "01"
         except Exception:
             pass
-
         self.carregar_dados()
 
     def ao_mudar_perfil_header(self, e):
@@ -797,17 +489,9 @@ class DashboardView(ft.Column):
             self.carregar_dados()
 
     def _obter_estilo_aba(self, ativo: bool):
-        if ativo:
-            return ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE_600,
-                color=ft.Colors.WHITE,
-                side=ft.BorderSide(1, ft.Colors.BLUE_600),
-            )
-        return ft.ButtonStyle(
-            bgcolor=ft.Colors.TRANSPARENT,
-            color=ft.Colors.WHITE,
-            side=ft.BorderSide(1, ft.Colors.WHITE_24),
-        )
+        bg = ft.Colors.BLUE_600 if ativo else ft.Colors.TRANSPARENT
+        side = ft.Colors.BLUE_600 if ativo else ft.Colors.WHITE_24
+        return ft.ButtonStyle(bgcolor=bg, color=ft.Colors.WHITE, side=ft.BorderSide(1, side))
 
     def mudar_aba(self, aba):
         self.aba_dashboard.visible = aba == "dashboard"

@@ -23,9 +23,7 @@ class SelecaoPerfilView(ft.Column):
         self.page_ref = page
         self.on_selecionar = on_selecionar
 
-        self.row_perfis = ft.Row(
-            alignment=ft.MainAxisAlignment.CENTER, spacing=30, wrap=True
-        )
+        self.row_perfis = ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=30, wrap=True)
         self.txt_novo_nome_perfil = ft.TextField(
             label="Nome do Perfil", hint_text="Ex: João, Pessoal...", width=250
         )
@@ -37,9 +35,7 @@ class SelecaoPerfilView(ft.Column):
             actions=[
                 ft.TextButton(
                     "Cancelar",
-                    on_click=lambda e: fechar_dialogo(
-                        self.page_ref, self.dlg_criar_perfil
-                    ),
+                    on_click=lambda e: fechar_dialogo(self.page_ref, self.dlg_criar_perfil),
                 ),
                 ft.FilledButton("Criar", on_click=self.salvar_perfil),
             ],
@@ -57,25 +53,43 @@ class SelecaoPerfilView(ft.Column):
         self.renderizar_grade_perfis(perfis)
 
     def renderizar_grade_perfis(self, perfis):
-        self.row_perfis.controls.clear()
-        for idx, p in enumerate(perfis):
-            self.row_perfis.controls.append(
-                self.criar_card_perfil(p, CORES_AVATAR[idx % len(CORES_AVATAR)])
+        controls = [
+            self._criar_card_base(
+                conteudo_box=ft.Text(
+                    p.nome[0].upper() if p.nome else "?",
+                    size=45,
+                    weight=ft.FontWeight.BOLD,
+                    color=ft.Colors.WHITE,
+                ),
+                rotulo=p.nome,
+                cor_bg=CORES_AVATAR[idx % len(CORES_AVATAR)],
+                on_click=lambda e, p_id=p.id: self.on_selecionar(p_id),
             )
-        self.row_perfis.controls.append(self.criar_card_adicionar())
+            for idx, p in enumerate(perfis)
+        ]
 
-    def criar_card_perfil(self, perfil, cor_bg):
-        letra = perfil.nome[0].upper() if perfil.nome else "?"
+        # Card de Adicionar
+        controls.append(
+            self._criar_card_base(
+                conteudo_box=ft.Icon("add", size=50, color=ft.Colors.GREY_400),
+                rotulo="Adicionar Perfil",
+                cor_bg=None,
+                border_padrao=ft.Border.all(2, ft.Colors.GREY_600),
+                on_click=lambda e: abrir_dialogo(self.page_ref, self.dlg_criar_perfil),
+            )
+        )
+
+        self.row_perfis.controls = controls
+
+    def _criar_card_base(
+        self, conteudo_box, rotulo, cor_bg, on_click, border_padrao=None
+    ):
+        """Helper genérico para evitar repetição no visual dos cards e no evento de hover."""
+        b_padrao = border_padrao or ft.Border.all(2, ft.Colors.TRANSPARENT)
+
         box = ft.Container(
             content=ft.Column(
-                [
-                    ft.Text(
-                        letra,
-                        size=45,
-                        weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.WHITE,
-                    )
-                ],
+                [conteudo_box],
                 alignment=ft.MainAxisAlignment.CENTER,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -83,74 +97,33 @@ class SelecaoPerfilView(ft.Column):
             height=110,
             bgcolor=cor_bg,
             border_radius=12,
-            border=ft.Border.all(2, ft.Colors.TRANSPARENT),
+            border=b_padrao,
         )
-        txt = ft.Text(
-            perfil.nome,
-            size=16,
-            color=ft.Colors.GREY_400,
-            weight=ft.FontWeight.W_500,
-        )
+        txt = ft.Text(rotulo, size=15 if cor_bg is None else 16, color=ft.Colors.GREY_400)
+
+        def hover(e):
+            is_hover = e.data == "true"
+            box.border = ft.Border.all(3, ft.Colors.WHITE) if is_hover else b_padrao
+            txt.color = ft.Colors.WHITE if is_hover else ft.Colors.GREY_400
+
+            # Caso o conteúdo do box seja um ícone (Card Adicionar), muda a cor dele também
+            if isinstance(conteudo_box, ft.Icon):
+                conteudo_box.color = ft.Colors.WHITE if is_hover else ft.Colors.GREY_400
+
+            card.update()
+
         card = ft.Container(
             content=ft.Column(
                 [box, txt],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=10,
             ),
-            on_click=lambda e, p_id=perfil.id: self.on_selecionar(p_id),
+            on_click=on_click,
+            on_hover=hover,
             padding=5,
             border_radius=12,
         )
 
-        def hover(e):
-            box.border = (
-                ft.Border.all(3, ft.Colors.WHITE)
-                if e.data == "true"
-                else ft.Border.all(2, ft.Colors.TRANSPARENT)
-            )
-            txt.color = ft.Colors.WHITE if e.data == "true" else ft.Colors.GREY_400
-            card.update()
-
-        card.on_hover = hover
-        return card
-
-    def criar_card_adicionar(self):
-        box = ft.Container(
-            content=ft.Column(
-                [ft.Icon(ft.Icons.ADD, size=50, color=ft.Colors.GREY_400)],
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            width=110,
-            height=110,
-            border_radius=12,
-            border=ft.Border.all(2, ft.Colors.GREY_600),
-        )
-        txt = ft.Text("Adicionar Perfil", size=15, color=ft.Colors.GREY_400)
-        card = ft.Container(
-            content=ft.Column(
-                [box, txt],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=10,
-            ),
-            on_click=lambda e: abrir_dialogo(self.page_ref, self.dlg_criar_perfil),
-            padding=5,
-            border_radius=12,
-        )
-
-        def hover(e):
-            box.border = (
-                ft.Border.all(3, ft.Colors.WHITE)
-                if e.data == "true"
-                else ft.Border.all(2, ft.Colors.GREY_600)
-            )
-            box.content.controls[0].color = (
-                ft.Colors.WHITE if e.data == "true" else ft.Colors.GREY_400
-            )
-            txt.color = ft.Colors.WHITE if e.data == "true" else ft.Colors.GREY_400
-            card.update()
-
-        card.on_hover = hover
         return card
 
     def salvar_perfil(self, e):
