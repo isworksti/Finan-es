@@ -71,7 +71,7 @@ class SelecaoPerfilView(ft.Column):
         # Card de Adicionar
         controls.append(
             self._criar_card_base(
-                conteudo_box=ft.Icon("add", size=50, color=ft.Colors.GREY_400),
+                conteudo_box=ft.Icon(ft.Icons.ADD, size=50, color=ft.Colors.GREY_400),
                 rotulo="Adicionar Perfil",
                 cor_bg=None,
                 border_padrao=ft.Border.all(2, ft.Colors.GREY_600),

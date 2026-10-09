@@ -1,6 +1,7 @@
+from datetime import datetime
 from sqlalchemy.orm import joinedload
 from sqlalchemy import extract
-from database.models import CartaoCredito, Perfil, Transacao
+from database.models import CartaoCredito, Perfil, Transacao, HistoricoLimite  # Importe HistoricoLimite se existir no models.py
 from utils.db import obter_sessao
 
 MESES = [
@@ -80,6 +81,54 @@ def salvar_cartao(nome, limite, dia_fechamento, dia_vencimento, perfil_id):
         raise ValueError(msg)
 
 
+def atualizar_cartao(cartao_id: int, nome: str, limite: float, dia_fechamento: int, dia_vencimento: int, anotacao_limite: str = None):
+    """
+    Atualiza os dados do cartão e grava o histórico se houver alteração de limite.
+    """
+    with obter_sessao() as db:
+        cartao = db.query(CartaoCredito).filter(CartaoCredito.id == cartao_id).first()
+        if not cartao:
+            return False
+
+        limite_anterior = cartao.limite
+        cartao.nome = nome
+        cartao.dia_fechamento = dia_fechamento
+        cartao.dia_vencimento = dia_vencimento
+
+        # Registrar no histórico apenas se o valor do limite realmente mudou
+        if abs(limite_anterior - limite) > 0.01:
+            cartao.limite = limite
+            
+            # Tenta gravar na tabela de histórico (se o modelo HistoricoLimite existir)
+            try:
+                historico = HistoricoLimite(
+                    cartao_id=cartao_id,
+                    limite_anterior=limite_anterior,
+                    limite_novo=limite,
+                    anotacao=anotacao_limite or "Alteração de limite",
+                    data_alteracao=datetime.now()
+                )
+                db.add(historico)
+            except Exception:
+                pass  # Se ainda não criou a tabela HistoricoLimite no banco, não quebra a execução
+
+        db.commit()
+        return True
+
+
+def buscar_historico_limite(cartao_id: int):
+    """
+    Retorna o histórico de alterações de limite de um cartão específico.
+    """
+    with obter_sessao() as db:
+        try:
+            return db.query(HistoricoLimite).filter(
+                HistoricoLimite.cartao_id == cartao_id
+            ).order_by(HistoricoLimite.data_alteracao.desc()).all()
+        except Exception:
+            return []
+
+
 def remover_cartao(cartao_id: int):
     """Remove um cartão de crédito pelo seu ID."""
     with obter_sessao() as db:
@@ -129,7 +178,7 @@ def obter_resumo_cartoes(perfil_id: int, mes: int = None, ano: int = None):
 
 def buscar_transacoes_do_perfil(perfil_id):
     """
-    CORRIGIDO: Usa o bloco 'with obter_sessao()' e joinedload para carregar
+    Usa o bloco 'with obter_sessao()' e joinedload para carregar
     o relacionamento com o cartão antes de fechar a sessão.
     """
     with obter_sessao() as db:

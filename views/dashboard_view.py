@@ -55,6 +55,7 @@ class DashboardView(ft.Column):
                 hint_text=hint,
                 keyboard_type=kb,
                 on_submit=on_sub,
+                content_padding=ft.Padding(left=12, right=12, top=12, bottom=12),
             )
 
         def make_dd(label, options, value=None, width=None, expand=False, on_change=None):
@@ -73,31 +74,52 @@ class DashboardView(ft.Column):
                 value=value,
                 options=opts,
                 on_select=on_change,
+                content_padding=ft.Padding(left=12, right=12, top=12, bottom=12),
+                menu_height=200,
             )
 
         # --- COMPONENTES PRINCIPAIS ---
-        self.txt_data = make_tf("Dia", value=f"{date.today().day:02d}", width=65, hint="DD")
+        self.txt_data = make_tf("Dia", value=f"{date.today().day:02d}", width=80, hint="DD")
         self.txt_descricao = make_tf("Descrição", expand=True, on_sub=self.adicionar_transacao)
-        self.txt_valor = make_tf("Valor (R$)", width=110, kb=ft.KeyboardType.NUMBER, on_sub=self.adicionar_transacao)
+        self.txt_valor = make_tf("Valor (R$)", width=140, kb=ft.KeyboardType.NUMBER, on_sub=self.adicionar_transacao)
 
-        self.dropdown_filtro_mes = make_dd("Mês da Fatura", MESES, value=str(datetime.now().month), width=150, on_change=self.ao_filtrar_data)
+        self.dropdown_filtro_mes = make_dd("Mês da Fatura", MESES, value=str(datetime.now().month), width=160, on_change=self.ao_filtrar_data)
         self.dropdown_filtro_ano = make_dd("Ano", [str(y) for y in range(2024, 2028)], value=str(datetime.now().year), width=110, on_change=self.ao_filtrar_data)
-        self.dropdown_perfis_header = make_dd("Perfil Ativo", [], width=160, on_change=self.ao_mudar_perfil_header)
+        self.dropdown_perfis_header = make_dd("Perfil Ativo", [], width=170, on_change=self.ao_mudar_perfil_header)
 
-        self.dropdown_tipo = make_dd("Tipo", ["Entrada", "Saída"], value="Saída", width=115)
+        self.dropdown_tipo = make_dd("Tipo", ["Entrada", "Saída"], value="Saída", width=130)
         self.dropdown_pagamento = make_dd(
-            "Pagamento", ["Dinheiro", "PIX", "Crédito", "Débito"], value="PIX", width=120, on_change=self.ao_mudar_forma_pagamento
+            "Pagamento", ["Dinheiro", "PIX", "Crédito", "Débito"], value="PIX", width=145, on_change=self.ao_mudar_forma_pagamento
         )
-        self.dropdown_cartao = make_dd("Cartão", [], width=140)
+        self.dropdown_cartao = make_dd("Cartão", [], width=150)
         self.dropdown_cartao.disabled = True
 
         self.btn_salvar = ft.FilledButton(
             "Adicionar",
             icon=ft.Icons.ADD,
-            width=130,
+            height=48,
+            style=ft.ButtonStyle(
+                padding=ft.Padding(left=12, right=12, top=12, bottom=12),
+            ),
             bgcolor=ft.Colors.BLUE_600,
             color=ft.Colors.WHITE,
             on_click=self.adicionar_transacao,
+        )
+
+        # --- FORMULÁRIO DE NOVO LANÇAMENTO (Inicia oculto pois a aba inicial é "dashboard") ---
+        self.row_formulario_lancamento = ft.Row(
+            [
+                self.txt_data,
+                self.txt_descricao,
+                self.txt_valor,
+                self.dropdown_tipo,
+                self.dropdown_pagamento,
+                self.dropdown_cartao,
+                self.btn_salvar
+            ],
+            spacing=8,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            visible=False  # Oculto por padrão no Dashboard
         )
 
         self.txt_kpi_entradas = self._txt_kpi(ft.Colors.GREEN_400)
@@ -120,9 +142,7 @@ class DashboardView(ft.Column):
         )
 
         self._construir_aba_dashboard()
-        self.aba_geral = self._criar_aba_tabela("Histórico", self.tabela_geral)
-        
-        # Criação da aba de Cartão com botão de gerenciamento integrado no seu conteúdo
+        self.aba_geral = self._criar_aba_tabela("Histórico de Lançamentos", self.tabela_geral)
         self.aba_cartao_content = self._criar_aba_cartao()
 
         # Botões de Navegação das Abas
@@ -155,12 +175,6 @@ class DashboardView(ft.Column):
         self.controls = [
             header,
             ft.Row(
-                [self.txt_data, self.txt_descricao, self.txt_valor, self.dropdown_tipo, self.dropdown_pagamento, self.dropdown_cartao, self.btn_salvar],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            ft.Divider(),
-            ft.Row(
                 [
                     self.btn_tab_dashboard, 
                     self.btn_tab_geral, 
@@ -169,6 +183,8 @@ class DashboardView(ft.Column):
                 spacing=10,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER
             ),
+            ft.Divider(),
+            self.row_formulario_lancamento,
             ft.Stack(controls=[self.aba_dashboard, self.aba_geral, self.aba_cartao_content], expand=True),
         ]
 
@@ -200,10 +216,9 @@ class DashboardView(ft.Column):
         )
 
     def _criar_aba_cartao(self):
-        # Cabeçalho da aba de Cartão de Crédito contendo a opção de Gerenciar Cartões
         header_cartao = ft.Row(
             [
-                ft.Text("Histórico de Faturas", size=18, weight=ft.FontWeight.BOLD),
+                ft.Text("Histórico de Faturas e Cartões", size=18, weight=ft.FontWeight.BOLD),
                 ft.TextButton(
                     "Gerenciar Cartões",
                     icon=ft.Icons.SETTINGS,
@@ -391,10 +406,10 @@ class DashboardView(ft.Column):
             self.tabela_geral.rows = self._gerar_linhas_tabela(transacoes_mes, modo_cartao=False)
 
             saldo_mes = total_entradas - total_saidas
-            self.txt_kpi_entradas.value = f"R$ {total_entradas:.2f}"
-            self.txt_kpi_saidas.value = f"R$ {total_saidas:.2f}"
-            self.txt_kpi_saldo.value = f"R$ {saldo_mes:.2f}"
-            self.txt_kpi_saldo.color = ft.Colors.GREEN_400 if saldo_mes >= 0 else ft.Colors.RED_400
+            self.txt_kpi_entradas.value = f"R$ {total_entradas:.2f}".replace(".", ",")
+            self.txt_kpi_saidas.value = f"R$ {total_saidas:.2f}".replace(".", ",")
+            self.txt_kpi_saldo.value = f"R$ {saldo_mes:.2f}".replace(".", ",")
+            self.txt_kpi_saldo.color = ft.Colors.GREEN_400 if saldo_mes >= 0 else ft.Colors.RED_400.replace(".", ",")
 
             tot_geral = total_entradas + total_saidas
             if tot_geral > 0:
@@ -427,7 +442,7 @@ class DashboardView(ft.Column):
                 if (tc_dt := extrair_data(tc)) and (tc_dt.year < ano_sel or (tc_dt.year == ano_sel and tc_dt.month <= mes_sel)):
                     saldo_fatura = saldo_fatura + tc.valor if tc.tipo == "Saída" else max(0.0, saldo_fatura - tc.valor)
 
-            self.txt_fatura_total.value = f"R$ {saldo_fatura:.2f}"
+            self.txt_fatura_total.value = f"R$ {saldo_fatura:.2f}".replace(".", ",")
 
             if compras_mes_atual > 0 or pagamentos_mes_atual > 0:
                 self.chart_cartao.sections = [
@@ -497,6 +512,9 @@ class DashboardView(ft.Column):
         self.aba_dashboard.visible = aba == "dashboard"
         self.aba_geral.visible = aba == "geral"
         self.aba_cartao_content.visible = aba == "cartao"
+
+        # Exibe o formulário de inclusão APENAS na aba de Lançamentos Gerais
+        self.row_formulario_lancamento.visible = (aba == "geral")
 
         self.btn_tab_dashboard.style = self._obter_estilo_aba(aba == "dashboard")
         self.btn_tab_geral.style = self._obter_estilo_aba(aba == "geral")

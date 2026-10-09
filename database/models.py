@@ -1,8 +1,9 @@
-from datetime import date
+from datetime import date, datetime
 from database.connection import Base
 from sqlalchemy import (
     Column,
     Date,
+    DateTime,
     Enum,
     Float,
     ForeignKey,
@@ -37,6 +38,26 @@ class CartaoCredito(Base):
     dia_vencimento = Column(Integer, nullable=True)
     perfil_id = Column(Integer, ForeignKey("perfis.id"), nullable=False)
 
+    # Relacionamento com o histórico de limites
+    historico_limites = relationship(
+        "HistoricoLimite",
+        back_populates="cartao",
+        cascade="all, delete-orphan",
+    )
+
+
+class HistoricoLimite(Base):
+    __tablename__ = "historicos_limite"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cartao_id = Column(Integer, ForeignKey("cartoes_credito.id"), nullable=False)
+    limite_anterior = Column(Float, nullable=False)
+    limite_novo = Column(Float, nullable=False)
+    anotacao = Column(String, nullable=True)
+    data_alteracao = Column(DateTime, default=datetime.now, nullable=False)
+
+    cartao = relationship("CartaoCredito", back_populates="historico_limites")
+
 
 class Transacao(Base):
     __tablename__ = "transacoes"
@@ -45,11 +66,9 @@ class Transacao(Base):
     descricao = Column(String(255), nullable=False)
     valor = Column(Float, nullable=False)
     cartao_id = Column(Integer, ForeignKey("cartoes_credito.id"), nullable=True)
-    
-    # CORREÇÃO AQUI: Apontando para "CartaoCredito"
+
     cartao = relationship("CartaoCredito", backref="transacoes")
 
-    # Validação do tipo direto no banco (Entrada ou Saída)
     tipo = Column(
         Enum("Entrada", "Saída", name="tipo_transacao_enum"),
         nullable=False,
@@ -57,7 +76,6 @@ class Transacao(Base):
 
     forma_pagamento = Column(String(50), nullable=True)
 
-    # Atribui a data atual no Python (default) e no próprio Banco (server_default)
     data = Column(
         Date,
         default=date.today,
@@ -65,7 +83,6 @@ class Transacao(Base):
         nullable=False,
     )
 
-    # FK apontando com exclusão em cascata nativa do banco
     perfil_id = Column(
         Integer,
         ForeignKey("perfis.id", ondelete="CASCADE"),
