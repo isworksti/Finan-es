@@ -11,37 +11,44 @@ class EditarTransacaoDialog(ft.AlertDialog):
         self.on_sucesso = on_sucesso
         self.transacao_em_edicao_id = None
 
-        self.txt_data = ft.TextField(label="Dia", width=65, hint_text="DD")
-        self.txt_descricao = ft.TextField(label="Descrição", expand=True)
-        self.txt_valor = ft.TextField(label="Valor (R$)", width=110, keyboard_type=ft.KeyboardType.NUMBER)
-
+        self.txt_data = ft.TextField(label="Dia", width=75, hint_text="DD")
+        
         opts_meses = [ft.dropdown.Option(str(k), text=str(v)) for k, v in MESES]
-        self.dropdown_mes = ft.Dropdown(label="Mês da Fatura", options=opts_meses, width=150)
+        self.dropdown_mes = ft.Dropdown(label="Mês da Fatura", options=opts_meses, expand=True)
         
         opts_anos = [ft.dropdown.Option(str(y)) for y in range(2024, 2028)]
         self.dropdown_ano = ft.Dropdown(label="Ano", options=opts_anos, width=110)
 
+        self.txt_descricao = ft.TextField(label="Descrição", expand=True)
+        
+        self.txt_valor = ft.TextField(label="Valor", expand=True, keyboard_type=ft.KeyboardType.NUMBER)
+
         opts_tipos = [ft.dropdown.Option("Entrada"), ft.dropdown.Option("Saída")]
-        self.dropdown_tipo = ft.Dropdown(label="Tipo", options=opts_tipos, width=115)
+        self.dropdown_tipo = ft.Dropdown(label="Tipo", options=opts_tipos, expand=True)
 
         opts_pagto = [ft.dropdown.Option(p) for p in ["Dinheiro", "PIX", "Crédito", "Débito"]]
-        self.dropdown_pagamento = ft.Dropdown(label="Pagamento", options=opts_pagto, width=120, on_select=self.ao_mudar_forma_pagamento)
+        self.dropdown_pagamento = ft.Dropdown(label="Pagamento", options=opts_pagto, expand=True, on_select=self.ao_mudar_forma_pagamento)
 
-        self.dropdown_cartao = ft.Dropdown(label="Cartão", options=[], width=140, disabled=True)
+        self.dropdown_cartao = ft.Dropdown(label="Cartão", options=[], expand=True, disabled=True)
 
         super().__init__(
-            title=ft.Text("Editar Lançamento"),
+            title=ft.Text("Editar Lançamento", weight=ft.FontWeight.BOLD),
             content=ft.Container(
-                width=420,
+                width=450,
+                padding=5,
                 content=ft.Column(
                     [
+                        # Linha 1: Dia, Mês (expandido) e Ano
                         ft.Row([self.txt_data, self.dropdown_mes, self.dropdown_ano], spacing=10),
+                        # Linha 2: Descrição
                         ft.Row([self.txt_descricao]),
+                        # Linha 3: Valor e Tipo dividindo o espaço igualmente
                         ft.Row([self.txt_valor, self.dropdown_tipo], spacing=10),
+                        # Linha 4: Pagamento e Cartão dividindo o espaço igualmente
                         ft.Row([self.dropdown_pagamento, self.dropdown_cartao], spacing=10),
                     ],
                     tight=True,
-                    spacing=12,
+                    spacing=14,
                 ),
             ),
             actions=[

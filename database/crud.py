@@ -5,6 +5,8 @@ from sqlalchemy.orm import joinedload
 
 from database.models import CartaoCredito, HistoricoLimite, Perfil, Transacao
 from utils.db import obter_sessao
+# Removida a importação de services.fatura_service para evitar importação circular!
+
 
 MESES = [
     (str(i), m)
@@ -67,6 +69,31 @@ def buscar_cartoes_do_perfil(perfil_id: int):
             .filter(CartaoCredito.perfil_id == perfil_id)
             .all()
         )
+
+
+def calcular_limites_cartao(cartao_id: int) -> dict:
+    """Calcula o limite total, comprometido e disponível de um cartão específico."""
+    with obter_sessao() as db:
+        cartao = db.query(CartaoCredito).filter(CartaoCredito.id == cartao_id).first()
+        if not cartao:
+            return {"total": 0.0, "comprometido": 0.0, "disponivel": 0.0}
+
+        limite_total = getattr(cartao, "limite", 0.0) or 0.0
+
+        # Busca todas as transações vinculadas a este cartão
+        transacoes = db.query(Transacao).filter(Transacao.cartao_id == cartao_id).all()
+
+        compras = sum(t.valor for t in transacoes if t.tipo == "Saída")
+        pagamentos = sum(t.valor for t in transacoes if t.tipo == "Entrada")
+        
+        comprometido = max(0.0, compras - pagamentos)
+        disponivel = max(0.0, limite_total - comprometido)
+
+        return {
+            "total": limite_total,
+            "comprometido": comprometido,
+            "disponivel": disponivel,
+        }
 
 
 def criar_novo_cartao(
@@ -258,38 +285,6 @@ def obter_resumo_cartoes(perfil_id: int, mes: int = None, ano: int = None):
         return resumo
 
 
-def calcular_limites_cartao(cartao_id: int) -> dict:
-    """
-    Calcula o limite total, o saldo devedor comprometido e o limite disponível.
-    """
-    with obter_sessao() as db:
-        cartao = (
-            db.query(CartaoCredito)
-            .filter(CartaoCredito.id == cartao_id)
-            .first()
-        )
-        if not cartao:
-            return {"total": 0.0, "comprometido": 0.0, "disponivel": 0.0}
-
-        limite_total = cartao.limite or 0.0
-
-        transacoes = (
-            db.query(Transacao).filter(Transacao.cartao_id == cartao_id).all()
-        )
-
-        total_saidas = sum(t.valor for t in transacoes if t.tipo == "Saída")
-        total_entradas = sum(t.valor for t in transacoes if t.tipo == "Entrada")
-
-        saldo_comprometido = max(0.0, total_saidas - total_entradas)
-        limite_disponivel = max(0.0, limite_total - saldo_comprometido)
-
-        return {
-            "total": limite_total,
-            "comprometido": saldo_comprometido,
-            "disponivel": limite_disponivel,
-        }
-
-
 # --- TRANSAÇÕES ---
 
 
@@ -391,3 +386,49 @@ def remover_transacao(transacao_id: int) -> bool:
             db.commit()
             return True
         return False
+
+from database.models import FaturaMensal # Certifique-se de importar o novo modelo se necessário
+
+def obter_ou_criar_fatura_mensal(cartao_id: int, mes: int, ano: int):
+    """Busca o registo de controle da fatura do mês/ano ou cria um com status 'Aberta'."""
+    with obter_sessao() as db:
+        fatura = (
+            db.query(FaturaMensal)
+            .filter(
+                FaturaMensal.cartao_id == cartao_id,
+                FaturaMensal.mes == mes,
+                FaturaMensal.ano == ano,
+            )
+            .first()
+        )
+        if not fatura:
+            fatura = FaturaMensal(
+                cartao_id=cartao_id, mes=mes, ano=ano, status="Aberta", valor_pago=0.0
+            )
+            db.add(fatura)
+            db.commit()
+            db.refresh(fatura)
+        return fatura
+
+
+def atualizar_status_fatura(cartao_id: int, mes: int, ano: int, novo_status: str):
+    """Atualiza o estado de uma fatura específica (Ex: 'Aberta', 'Fechada', 'Paga')."""
+    with obter_sessao() as db:
+        fatura = (
+            db.query(FaturaMensal)
+            .filter(
+                FaturaMensal.cartao_id == cartao_id,
+                FaturaMensal.mes == mes,
+                FaturaMensal.ano == ano,
+            )
+            .first()
+        )
+        if not fatura:
+            fatura = FaturaMensal(
+                cartao_id=cartao_id, mes=mes, ano=ano, status=novo_status
+            )
+            db.add(fatura)
+        else:
+            fatura.status = novo_status
+        db.commit()
+        return True

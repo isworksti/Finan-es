@@ -106,7 +106,7 @@ class GestaoCartoesDialog(ft.AlertDialog):
         self.txt_limite.value = ""
         self.txt_fechamento.value = ""
         self.txt_vencimento.value = ""
-        self.btn_salvar.text = "Salvar Cartão"
+        self.btn_salvar.text = "Salvar"
 
     def preencher_formulario_edicao(self, cartao):
         self.cartao_em_edicao_id = cartao.id

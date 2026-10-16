@@ -1,5 +1,7 @@
 from datetime import date, datetime
 from database.connection import Base
+from typing import Optional
+from sqlmodel import SQLModel, Field
 from sqlalchemy import (
     Column,
     Date,
@@ -90,3 +92,13 @@ class Transacao(Base):
     )
 
     perfil = relationship("Perfil", back_populates="transacoes")
+
+class FaturaMensal(SQLModel, table=True):
+    __tablename__ = "faturas_mensais"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cartao_id: int = Field(foreign_key="cartoes_credito.id")
+    mes: int
+    ano: int
+    status: str = Field(default="Aberta")  # "Aberta", "Fechada", "Paga"
+    valor_pago: float = Field(default=0.0)
