@@ -1,16 +1,21 @@
 import flet as ft
 from database.connection import Base, engine
+from database.migracoes import aplicar_migracoes
+import database.models  # noqa: F401  (registra todas as tabelas, inclusive faturas_mensais)
 from views.dashboard_view import DashboardView
 from views.selecao_perfil_view import SelecaoPerfilView
 
 Base.metadata.create_all(bind=engine)
+aplicar_migracoes(engine)  # acrescenta colunas novas em bancos antigos, sem perder dados
 
 def main(page: ft.Page):
     page.title = "Controle Financeiro Pessoal"
     page.theme_mode = ft.ThemeMode.DARK
-    page.window_width = 1250
-    page.window_height = 800
-    page.padding = 20
+    page.window.width = 1280
+    page.window.height = 760
+    page.window.min_width = 960
+    page.window.min_height = 600
+
 
     perfil_ativo_id = [None]
 

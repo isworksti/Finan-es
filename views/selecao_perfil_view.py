@@ -42,6 +42,8 @@ class SelecaoPerfilView(ft.Column):
             actions_alignment=ft.MainAxisAlignment.END,
         )
 
+        self.page_ref.overlay.append(self.dlg_criar_perfil)
+
         self.controls = [
             ft.Text("Quem está usando?", size=36, weight=ft.FontWeight.BOLD),
             ft.Container(height=30),
@@ -127,15 +129,26 @@ class SelecaoPerfilView(ft.Column):
         return card
 
     def salvar_perfil(self, e):
-        nome = self.txt_novo_nome_perfil.value.strip()
-        if not nome:
-            mostrar_mensagem(self.page_ref, "Digite um nome!")
-            return
+        try:
+            # Garante que o valor não seja None para evitar erros
+            if not self.txt_novo_nome_perfil.value:
+                mostrar_mensagem(self.page_ref, "Digite um nome!")
+                return
 
-        sucesso, msg = criar_novo_perfil(nome)
-        mostrar_mensagem(self.page_ref, msg)
-        if sucesso:
-            fechar_dialogo(self.page_ref, self.dlg_criar_perfil)
-            self.txt_novo_nome_perfil.value = ""
-            self.carregar_perfis()
-            self.page_ref.update()
+            nome = self.txt_novo_nome_perfil.value.strip()
+            if not nome:
+                mostrar_mensagem(self.page_ref, "Digite um nome!")
+                return
+
+            sucesso, msg = criar_novo_perfil(nome)
+            mostrar_mensagem(self.page_ref, msg)
+            
+            if sucesso:
+                fechar_dialogo(self.page_ref, self.dlg_criar_perfil)
+                self.txt_novo_nome_perfil.value = ""
+                self.carregar_perfis()
+                self.page_ref.update()
+                
+        except Exception as ex:
+            print(f"Erro detalhado ao criar perfil: {ex}")
+            mostrar_mensagem(self.page_ref, f"❌ Erro ao criar perfil: {ex}")

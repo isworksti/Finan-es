@@ -1,7 +1,5 @@
 from datetime import date, datetime
 from database.connection import Base
-from typing import Optional
-from sqlmodel import SQLModel, Field
 from sqlalchemy import (
     Column,
     Date,
@@ -11,6 +9,8 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Boolean,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -68,7 +68,7 @@ class Transacao(Base):
     descricao = Column(String(255), nullable=False)
     valor = Column(Float, nullable=False)
     cartao_id = Column(Integer, ForeignKey("cartoes_credito.id"), nullable=True)
-
+    pago = Column(Boolean, default=True, nullable=False)
     cartao = relationship("CartaoCredito", backref="transacoes")
 
     tipo = Column(
@@ -93,12 +93,85 @@ class Transacao(Base):
 
     perfil = relationship("Perfil", back_populates="transacoes")
 
-class FaturaMensal(SQLModel, table=True):
-    __tablename__ = "faturas_mensais"
+class FaturaMensal(Base):
+    """Controle de status da fatura de um cartão em um mês/ano.
 
-    id: Optional[int] = Field(default=None, primary_key=True)
-    cartao_id: int = Field(foreign_key="cartoes_credito.id")
-    mes: int
-    ano: int
-    status: str = Field(default="Aberta")  # "Aberta", "Fechada", "Paga"
-    valor_pago: float = Field(default=0.0)
+    Usa o mesmo Base dos outros modelos para que Base.metadata.create_all()
+    crie a tabela automaticamente.
+    """
+
+    __tablename__ = "faturas_mensais"
+    __table_args__ = (
+        UniqueConstraint("cartao_id", "mes", "ano", name="uq_fatura_cartao_mes_ano"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    cartao_id = Column(
+        Integer,
+        ForeignKey("cartoes_credito.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mes = Column(Integer, nullable=False)
+    ano = Column(Integer, nullable=False)
+    status = Column(String(20), nullable=False, default="Aberta")  # "Aberta", "Fechada", "Paga"
+    valor_pago = Column(Float, nullable=False, default=0.0)
+
+
+class ContaRecorrente(Base):
+    """Conta fixa que se repete todo mês (aluguel, internet, assinaturas...)."""
+
+    __tablename__ = "contas_recorrentes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    perfil_id = Column(
+        Integer,
+        ForeignKey("perfis.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    descricao = Column(String(255), nullable=False)
+    valor = Column(Float, nullable=False)
+    dia_vencimento = Column(Integer, nullable=False)
+    forma_pagamento = Column(String(50), nullable=False, default="PIX")
+    # Data de inserção / início (âncora temporal para projeções e parcelamentos)
+    data_inicio = Column(Date, nullable=False, default=date.today)
+    # Parcelamento: prazo máximo em meses (vazio = conta sem fim, como aluguel) e
+    # número da parcela no mês de data_inicio (as seguintes são calculadas)
+    total_parcelas = Column(Integer, nullable=True)
+    parcela_inicial = Column(Integer, nullable=False, default=1, server_default="1")
+
+    pagamentos = relationship(
+        "PagamentoConta",
+        back_populates="conta",
+        cascade="all, delete-orphan",
+    )
+
+
+class PagamentoConta(Base):
+    """Registra que uma conta recorrente foi paga em um mês/ano.
+
+    Está ligado à Transacao (saída) criada no momento do pagamento: se essa
+    transação for apagada, o ON DELETE CASCADE remove este registro e a conta
+    volta a aparecer como "a pagar".
+    """
+
+    __tablename__ = "pagamentos_conta"
+    __table_args__ = (
+        UniqueConstraint("conta_id", "mes", "ano", name="uq_pagamento_conta_mes_ano"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    conta_id = Column(
+        Integer,
+        ForeignKey("contas_recorrentes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mes = Column(Integer, nullable=False)
+    ano = Column(Integer, nullable=False)
+    transacao_id = Column(
+        Integer,
+        ForeignKey("transacoes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    conta = relationship("ContaRecorrente", back_populates="pagamentos")
+
