@@ -211,13 +211,13 @@ class AbaLancamentosGerais(ft.Container):
         forma = self.dropdown_forma.value or "Todas"
         return busca, forma
 
-    def abrir_formulario(self, e=None):
+    async def abrir_formulario(self, e=None):
         self.painel_formulario.visible = True
         self.btn_adicionar.visible = False
         self._ativar_atalhos_teclado()
         if self.page_ref:
             self.page_ref.update()
-            self.txt_data.focus()
+            await self.txt_data.focus()
 
     def fechar_formulario(self, e=None):
         self.painel_formulario.visible = False
@@ -305,7 +305,7 @@ class AbaLancamentosGerais(ft.Container):
             mostrar_mensagem(self.page_ref, "✅ Lançamento adicionado com sucesso!")
             self.on_atualizar()
             if self.page_ref:
-                self.txt_descricao.focus()
+                self.page_ref.run_task(self.txt_descricao.focus)
         except Exception as ex:
             mostrar_mensagem(self.page_ref, f"❌ Erro ao adicionar lançamento: {ex}")
         finally:

@@ -3,6 +3,12 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 
 
+def _normalizar_data(dt):
+    if hasattr(dt, "date"):
+        return dt.date()
+    return dt
+
+
 def obter_mes_ano_fatura(data_transacao: date, dia_fechamento: int = None, tipo: str = "Saída"):
     """
     Calcula em qual mês/ano de fatura a transação irá cair com base
@@ -12,13 +18,17 @@ def obter_mes_ano_fatura(data_transacao: date, dia_fechamento: int = None, tipo:
     entram na fatura do próprio mês; compras feitas depois do dia de
     fechamento entram na fatura do mês seguinte.
     """
-    if not dia_fechamento:
-        return data_transacao.month, data_transacao.year
+    data_ref = _normalizar_data(data_transacao)
+    if not data_ref:
+        return None, None
 
-    if data_transacao.day > dia_fechamento:
-        data_fatura = data_transacao + relativedelta(months=1)
+    if not dia_fechamento:
+        return data_ref.month, data_ref.year
+
+    if data_ref.day > int(dia_fechamento):
+        data_fatura = data_ref + relativedelta(months=1)
     else:
-        data_fatura = data_transacao
+        data_fatura = data_ref
 
     return data_fatura.month, data_fatura.year
 
@@ -38,12 +48,12 @@ def filtrar_transacoes_fatura(transacoes, mes_alvo, ano_alvo, dia_fechamento=Non
     """
     filtradas = []
     for t in transacoes:
-        t_dt = getattr(t, "data", None) or getattr(t, "data_dt", None)
+        t_dt = _normalizar_data(getattr(t, "data", None) or getattr(t, "data_dt", None))
         if not t_dt:
             continue
 
         m_fat, a_fat = obter_mes_ano_fatura(t_dt, dia_fechamento, getattr(t, "tipo", "Saída"))
-        if m_fat == mes_alvo and a_fat == ano_alvo:
+        if m_fat == int(mes_alvo) and a_fat == int(ano_alvo):
             filtradas.append(t)
 
     return filtradas
@@ -80,7 +90,7 @@ def projetar_faturas_futuras(
         if c_id != cartao_id:
             continue
 
-        t_dt = getattr(t, "data", None) or getattr(t, "data_dt", None)
+        t_dt = _normalizar_data(getattr(t, "data", None) or getattr(t, "data_dt", None))
         if not t_dt:
             continue
 
@@ -89,10 +99,10 @@ def projetar_faturas_futuras(
 
         for p in range(total_parcelas):
             data_parcela_base = t_dt + relativedelta(months=p)
-            ano_fat, mes_fat = (
-                obter_mes_ano_fatura(data_parcela_base, dia_fechamento, getattr(t, "tipo", "Saída"))[::-1]
+            m_fat, a_fat = obter_mes_ano_fatura(
+                data_parcela_base, dia_fechamento, getattr(t, "tipo", "Saída")
             )
-            chave = (ano_fat, mes_fat)
+            chave = (a_fat, m_fat)
             if chave in projecoes:
                 if t.tipo == "Saída":
                     projecoes[chave] += valor_parcela
@@ -114,7 +124,7 @@ def calcular_comprometido(transacoes, dia_fechamento=None, faturas_pagas=None) -
     abatimentos = 0.0
 
     for t in transacoes:
-        t_dt = getattr(t, "data", None) or getattr(t, "data_dt", None)
+        t_dt = _normalizar_data(getattr(t, "data", None) or getattr(t, "data_dt", None))
         if t_dt and pagas:
             fatura = obter_mes_ano_fatura(t_dt, dia_fechamento, getattr(t, "tipo", "Saída"))
             if fatura in pagas:

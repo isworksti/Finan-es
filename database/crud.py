@@ -351,6 +351,44 @@ def buscar_transacoes_do_perfil(perfil_id: int):
         )
 
 
+def _mes_ano_fatura(data_dt: date, dia_fechamento: int | None) -> tuple[int, int]:
+    """Retorna (mes, ano) da fatura à qual a transação pertence conforme o dia_fechamento."""
+    if hasattr(data_dt, "date"):
+        data_dt = data_dt.date()
+    ref = data_dt
+    if dia_fechamento and int(data_dt.day) > int(dia_fechamento):
+        ref = data_dt + relativedelta(months=1)
+    return ref.month, ref.year
+
+
+def buscar_transacoes_cartao_periodo(cartao_id: int, mes: int, ano: int):
+    """
+    Retorna as transações vinculadas a um cartão cuja fatura pertence a (mes, ano)
+    de acordo com o dia_fechamento do cartão.
+    """
+    with obter_sessao() as db:
+        cartao = db.query(CartaoCredito).filter(CartaoCredito.id == cartao_id).first()
+        dia_fechamento = getattr(cartao, "dia_fechamento", None) if cartao else None
+
+        transacoes = (
+            db.query(Transacao)
+            .filter(Transacao.cartao_id == cartao_id)
+            .order_by(Transacao.data.desc(), Transacao.id.desc())
+            .all()
+        )
+
+        resultado = []
+        for t in transacoes:
+            dt = getattr(t, "data", None)
+            if not dt:
+                continue
+            m_fat, a_fat = _mes_ano_fatura(dt, dia_fechamento)
+            if m_fat == int(mes) and a_fat == int(ano):
+                resultado.append(t)
+
+        return resultado
+
+
 def salvar_transacao(
     descricao: str,
     valor: float,
@@ -437,6 +475,7 @@ def remover_transacao(transacao_id: int) -> bool:
             return True
         return False
 
+
 def _calcular_status_inicial_fatura(
     mes: int,
     ano: int,
@@ -450,6 +489,7 @@ def _calcular_status_inicial_fatura(
         if ref.day > int(dia_fechamento):
             return "Fechada"
     return "Aberta"
+
 
 def obter_ou_criar_fatura_mensal(
     cartao_id: int,
@@ -636,9 +676,9 @@ def salvar_conta_recorrente(
     """
     Cria uma conta recorrente ou, se 'conta_id' for informado, atualiza a existente.
 
-    - Quando 'total_parcelas' é informado (e não é reajuste de valor unitário):
+- Quando 'total_parcelas' é informado (e não é reajuste de valor unitário):
       'valor' é tratado como o valor total do parcelamento e dividido pelo número de parcelas.
-    - Quando 'total_parcelas' é None: 'valor' é o valor mensal recorrente.
+- Quando 'total_parcelas' é None: 'valor' é o valor mensal recorrente.
     """
     valor_float = float(valor)
     if valor_float <= 0:
@@ -731,8 +771,8 @@ def alternar_pagamento_conta(conta_id: int, mes: int, ano: int, pago: bool) -> b
     """
     Marca/desmarca uma conta recorrente como paga em um mês.
 
-    - Pago: cria uma Transacao de saída no dia do vencimento e registra o pagamento.
-    - Desmarcado: apaga o registro de pagamento e a transação que ele gerou.
+- Pago: cria uma Transacao de saída no dia do vencimento e registra o pagamento.
+- Desmarcado: apaga o registro de pagamento e a transação que ele gerou.
     """
     with obter_sessao() as db:
         conta = db.query(ContaRecorrente).filter(ContaRecorrente.id == conta_id).first()
